@@ -1,30 +1,165 @@
 ---
-title: "tidymodels Step 1: Modeling"
+title: "tidymodels Step 1: Build a model"
 author: "Connor French"
 date: "5/8/2020"
-output: html_document
+output: github_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+Load packages
+```{r warning=FALSE, message=FALSE}
+library(tidymodels)
+library(readr)
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+Read in urchins data
+```{r}
+urchins <-
+  # Data were assembled for a tutorial 
+  # at https://www.flutterbys.com.au/stats/tut/tut7.5a.html
+  read_csv("https://tidymodels.org/start/models/urchins.csv") %>% 
+  # Change the names to be a little more verbose
+  setNames(c("food_regime", "initial_volume", "width")) %>% 
+  # Factors are very helpful for modeling, so we convert one column
+  mutate(food_regime = factor(food_regime, levels = c("Initial", "Low", "High")))
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+Variables are:
+* experimental feeding regime group `food_regime` (`Initial`, `Low`, `High`)
+* size in millimeters at the start of the experiment (`initial_volume`), and
+* suture width at the end of the experiment (`width`)
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+Plotting the data
+```{r}
+ggplot(urchins,
+       aes(x = initial_volume, 
+           y = width, 
+           group = food_regime, 
+           col = food_regime)) + 
+  geom_point() + 
+  geom_smooth(method = lm, se = FALSE) +
+  scale_color_viridis_d(option = "plasma", end = .7)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## Build and fit a model
+Going to use a two-way ANOVA.
+
+Formula:  
+`width ~ initial_volume * food_regime`
+
+
+Set the linear model engine
+```{r}
+lm_mod <- 
+  linear_reg() %>% 
+  set_engine("lm")
+```
+
+Fit the model
+```{r}
+lm_fit <- 
+  lm_mod %>% 
+  fit(width ~ initial_volume * food_regime, data = urchins)
+
+lm_fit
+```
+
+
+
+
+Use the **brooms** package's nice `tidy` function to format output as a tibble.
+```{r}
+tidy(lm_fit)
+```
+
+Predict to urchins with an initial volume of 20 ml.
+```{r}
+new_points <- expand.grid(initial_volume = 20, 
+                          food_regime = c("Initial", "Low", "High"))
+new_points
+```
+
+```{r}
+mean_pred <- predict(lm_fit, new_data = new_points)
+mean_pred
+```
+
+
+
+Confidence interval predictions with plot.
+```{r}
+conf_int_pred <- predict(lm_fit, 
+                         new_data = new_points, 
+                         type = "conf_int")
+conf_int_pred
+
+# Now combine: 
+plot_data <- 
+  new_points %>% 
+  bind_cols(mean_pred) %>% 
+  bind_cols(conf_int_pred)
+
+# and plot:
+ggplot(plot_data, aes(x = food_regime)) + 
+  geom_point(aes(y = .pred)) + 
+  geom_errorbar(aes(ymin = .pred_lower, 
+                    ymax = .pred_upper),
+                width = .2) + 
+  labs(y = "urchin size")
+```
+
+
+
+## Model with a different engine
+
+Contructing a Bayesian linear model.
+
+```{r}
+# set the prior distribution
+prior_dist <- rstanarm::student_t(df = 1)
+
+set.seed(123)
+
+# make the parsnip model
+bayes_mod <-   
+  linear_reg() %>% 
+  set_engine("stan", 
+             prior_intercept = prior_dist, 
+             prior = prior_dist) 
+
+# train the model
+bayes_fit <- 
+  bayes_mod %>% 
+  fit(width ~ initial_volume * food_regime, data = urchins)
+
+print(bayes_fit, digits = 5)
+```
+
+Look at the parameters table
+```{r}
+tidy(bayes_fit, intervals = TRUE)
+```
+
+
+Plot predictions
+```{r}
+bayes_plot_data <- 
+  new_points %>% 
+  bind_cols(predict(bayes_fit, new_data = new_points)) %>% 
+  bind_cols(predict(bayes_fit, new_data = new_points, type = "conf_int"))
+
+ggplot(bayes_plot_data, aes(x = food_regime)) + 
+  geom_point(aes(y = .pred)) + 
+  geom_errorbar(aes(ymin = .pred_lower, ymax = .pred_upper), width = .2) + 
+  labs(y = "urchin size") + 
+  ggtitle("Bayesian model with t(1) prior distribution")
+```
+
+
+
+```{r}
+
+```
+
